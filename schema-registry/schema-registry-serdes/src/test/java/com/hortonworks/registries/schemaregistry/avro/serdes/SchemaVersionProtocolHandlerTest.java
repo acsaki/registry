@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2019 Cloudera, Inc.
+ * Copyright 2016-2022 Cloudera, Inc.
  * <p>
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,6 +33,8 @@ import org.apache.avro.specific.SpecificData;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.ByteArrayInputStream;
 import java.util.Collections;
@@ -47,9 +49,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 public class SchemaVersionProtocolHandlerTest {
-    
+
     private SchemaRegistryClient mockSchemaRegistryClient;
-    
+
     @BeforeEach
     public void setup() {
         mockSchemaRegistryClient = mock(SchemaRegistryClient.class);
@@ -65,7 +67,29 @@ public class SchemaVersionProtocolHandlerTest {
         }
     }
 
-    private void testSerDes(Long id, Number serdesProtocolVersion) throws Exception {
+    @Test
+    public void testIntegerSerDesProtocolVersion() throws Exception {
+        testSerDes(1L, 1);
+    }
+
+    @Test
+    public void testStringSerDesProtocolVersion() throws Exception {
+        testSerDes(1L, "1");
+    }
+
+    @ValueSource(bytes = {(byte) 128, (byte) -10, (byte) 129})
+    @ParameterizedTest
+    public void testSerDesProtocolVersionMustFitIntoAByte(byte invalidValue) {
+        Assertions.assertThrows(AvroException.class, () -> testSerDes(1L, invalidValue));
+    }
+
+    @ValueSource(bytes = {(byte) 10, (byte) 22, (byte) 33})
+    @ParameterizedTest
+    public void testNonExistingSerDesProtocolVersion(byte invalidProtocolId) {
+        Assertions.assertThrows(AvroException.class, () -> testSerDes(1L, invalidProtocolId - 128));
+    }
+
+    private void testSerDes(Long id, Object serdesProtocolVersion) throws Exception {
         SchemaMetadata schemaMetadata =
                 new SchemaMetadata.Builder("random-" + System.currentTimeMillis())
                         .schemaGroup("custom")
@@ -77,9 +101,9 @@ public class SchemaVersionProtocolHandlerTest {
 
         Device input = new Device(1L, "device", 1, System.currentTimeMillis());
         SchemaVersionInfo schemaVersionInfo = new SchemaVersionInfo(id, input.getName().toString(), schemaIdVersion.getVersion(),
-                                                                    input.getSchema().toString(),
-                                                                    System.currentTimeMillis(),
-                                                                    "some device");
+                input.getSchema().toString(),
+                System.currentTimeMillis(),
+                "some device");
         when(mockSchemaRegistryClient.getSchemaMetadataInfo(anyString())).thenReturn(new SchemaMetadataInfo(schemaMetadata));
         when(mockSchemaRegistryClient.addSchemaVersion(any(SchemaMetadata.class), any(SchemaVersion.class))).thenReturn(schemaIdVersion);
         when(mockSchemaRegistryClient.getSchemaVersionInfo(any(SchemaVersionKey.class))).thenReturn(schemaVersionInfo);
@@ -95,25 +119,9 @@ public class SchemaVersionProtocolHandlerTest {
         Object deserializedObj = deserializer.deserialize(new ByteArrayInputStream(serializedData), null);
 
         Assertions.assertEquals(0, SpecificData.get().compare(input, deserializedObj, input.getSchema()));
-        
+
         verify(mockSchemaRegistryClient, atMost(2)).getSchemaMetadataInfo(anyString());
         verify(mockSchemaRegistryClient, atMost(2)).addSchemaVersion(any(SchemaMetadata.class), any(SchemaVersion.class));
         verify(mockSchemaRegistryClient, atMost(2)).getSchemaVersionInfo(any(SchemaVersionKey.class));
     }
-
-    @Test
-    public void testIntegerSerDesProtocolVersion() throws Exception {
-       testSerDes(1L, 1);
-    }
-
-    @Test
-    public void testSerDesProtocolVersionAsMoreThan127() {
-       Assertions.assertThrows(AvroException.class, () -> testSerDes(1L, Byte.MAX_VALUE + 1 + Math.abs(new Random().nextInt())));
-    }
-
-    @Test
-    public void testSerDesProtocolVersionAsLessThanZero() {
-        Assertions.assertThrows(AvroException.class, () -> testSerDes(1L, new Random().nextInt(127) - 128));
-    }
-
 }
